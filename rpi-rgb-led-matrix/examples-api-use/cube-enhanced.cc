@@ -61,6 +61,33 @@ static void HSVToRGB(float hue, uint8_t saturation, uint8_t value,
   *b = (uint8_t)((bf + m) * 255);
 }
 
+// Simple line drawing helper using Bresenham's algorithm
+static void DrawLineRGB(Canvas *canvas, int x0, int y0, int x1, int y1,
+                        uint8_t r, uint8_t g, uint8_t b) {
+  int dx = abs(x1 - x0);
+  int dy = abs(y1 - y0);
+  int sx = (x0 < x1) ? 1 : -1;
+  int sy = (y0 < y1) ? 1 : -1;
+  int err = dx - dy;
+  int x = x0, y = y0;
+
+  while (true) {
+    if (x >= 0 && x < canvas->width() && y >= 0 && y < canvas->height()) {
+      canvas->SetPixel(x, y, r, g, b);
+    }
+    if (x == x1 && y == y1) break;
+    int e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
 // 3D point structure
 struct Point3D {
   float x, y, z;
@@ -102,8 +129,6 @@ struct Point3D {
 void Demo3DRotatingCube(Canvas *canvas) {
   int width = canvas->width();
   int height = canvas->height();
-  int panel_width = width / 2;
-  int panel_height = (int)(height / 1.5);
 
   float rot_x = 0, rot_y = 0, rot_z = 0;
 
@@ -127,8 +152,8 @@ void Demo3DRotatingCube(Canvas *canvas) {
 
     // Draw cube edges with colors
     struct Edge {
-      int a, b;
-      uint8_t r, g, b;
+      int start, end;
+      uint8_t r, g, b_color;
     };
 
     std::vector<Edge> edges = {
@@ -143,8 +168,8 @@ void Demo3DRotatingCube(Canvas *canvas) {
     // Project and draw edges
     for (const auto &edge : edges) {
       int x1, y1, x2, y2;
-      vertices[edge.a].project(x1, y1, width, height);
-      vertices[edge.b].project(x2, y2, width, height);
+      vertices[edge.start].project(x1, y1, width, height);
+      vertices[edge.end].project(x2, y2, width, height);
 
       // Clamp coordinates
       x1 = (x1 < 0) ? 0 : ((x1 >= width) ? width - 1 : x1);
@@ -152,7 +177,7 @@ void Demo3DRotatingCube(Canvas *canvas) {
       x2 = (x2 < 0) ? 0 : ((x2 >= width) ? width - 1 : x2);
       y2 = (y2 < 0) ? 0 : ((y2 >= height) ? height - 1 : y2);
 
-      canvas->DrawLine(x1, y1, x2, y2, edge.r, edge.g, edge.b);
+      DrawLineRGB(canvas, x1, y1, x2, y2, edge.r, edge.g, edge.b_color);
     }
 
     usleep(30 * 1000);
