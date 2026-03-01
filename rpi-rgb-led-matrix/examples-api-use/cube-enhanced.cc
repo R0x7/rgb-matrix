@@ -28,6 +28,39 @@ static void InterruptHandler(int signo) {
   interrupt_received = true;
 }
 
+// HSV to RGB color conversion helper function
+static void HSVToRGB(float hue, uint8_t saturation, uint8_t value,
+                     uint8_t *r, uint8_t *g, uint8_t *b) {
+  float h = fmod(hue, 360.0);
+  if (h < 0) h += 360.0;
+  float s = saturation / 255.0;
+  float v = value / 255.0;
+  
+  float c = v * s;
+  float x = c * (1 - fabs(fmod(h / 60.0, 2) - 1));
+  float m = v - c;
+  
+  float rf = 0, gf = 0, bf = 0;
+  
+  if (h < 60) {
+    rf = c; gf = x; bf = 0;
+  } else if (h < 120) {
+    rf = x; gf = c; bf = 0;
+  } else if (h < 180) {
+    rf = 0; gf = c; bf = x;
+  } else if (h < 240) {
+    rf = 0; gf = x; bf = c;
+  } else if (h < 300) {
+    rf = x; gf = 0; bf = c;
+  } else {
+    rf = c; gf = 0; bf = x;
+  }
+  
+  *r = (uint8_t)((rf + m) * 255);
+  *g = (uint8_t)((gf + m) * 255);
+  *b = (uint8_t)((bf + m) * 255);
+}
+
 // 3D point structure
 struct Point3D {
   float x, y, z;
