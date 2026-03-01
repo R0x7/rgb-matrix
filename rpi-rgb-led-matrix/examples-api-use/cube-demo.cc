@@ -137,8 +137,6 @@ private:
 void DemoRotatingRainbow(Canvas *canvas) {
   int width = canvas->width();
   int height = canvas->height();
-  int panel_width = width / 2;
-  int panel_height = (int)(height / 1.5);
 
   float time = 0;
   while (!interrupt_received) {
@@ -308,10 +306,6 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Register and apply the cube pixel mapper
-  CubePixelMapper *cube_mapper = new CubePixelMapper();
-  canvas = canvas->CreateFrameCanvas();  // Get the initial canvas
-  
   signal(SIGTERM, InterruptHandler);
   signal(SIGINT, InterruptHandler);
 
