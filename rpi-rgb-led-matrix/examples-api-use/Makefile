@@ -1,7 +1,7 @@
 CFLAGS=-Wall -O3 -g -Wextra -Wno-unused-parameter
 CXXFLAGS=$(CFLAGS)
-OBJECTS=demo-main.o minimal-example.o c-example.o text-example.o scrolling-text-example.o clock.o ledcat.o input-example.o pixel-mover.o
-BINARIES=demo minimal-example c-example text-example scrolling-text-example clock ledcat input-example pixel-mover
+OBJECTS=demo-main.o minimal-example.o c-example.o text-example.o scrolling-text-example.o clock.o ledcat.o input-example.o pixel-mover.o cube-demo.o cube-enhanced.o cube-image-viewer.o
+BINARIES=demo minimal-example c-example text-example scrolling-text-example clock ledcat input-example pixel-mover cube-demo cube-enhanced cube-image-viewer
 
 # Where our library resides. You mostly only need to change the
 # RGB_LIB_DISTRIBUTION, this is where the library is checked out.
@@ -31,6 +31,9 @@ scrolling-text-example : scrolling-text-example.o
 clock : clock.o
 ledcat : ledcat.o
 pixel-mover : pixel-mover.o
+cube-demo : cube-demo.o $(RGB_LIBRARY)
+cube-enhanced : cube-enhanced.o $(RGB_LIBRARY)
+cube-image-viewer : cube-image-viewer.o $(RGB_LIBRARY)
 
 # All the binaries that have the same name as the object file.q
 % : %.o $(RGB_LIBRARY)
