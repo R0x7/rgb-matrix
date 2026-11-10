@@ -51,7 +51,9 @@ Then `scene=calibrate` should show TOP / LEFT / RIGHT upright with matching edge
 .\pc\build.ps1                  # builds cube-sender.exe (uses the C# compiler built into Windows)
 .\pc\install-startup.ps1        # run at login, hidden
 .\pc\cubectl.ps1 status
-.\pc\cubectl.ps1 scene=lava     # pin a scene;  auto | next | off | on | brightness=30 | reload
+.\pc\cubectl.ps1 scene=lava     # pin a scene;  auto | next | off | on | toggle | brightness=30 | reload
+.\pc\cube off                   # same as cubectl.ps1, but works when Windows blocks .ps1 scripts
+.\pc\install-toggle.ps1        # desktop shortcut: double-click to turn the cube off / back on
 ```
 
 The sender sends stats and a 32-band spectrum of the default output device. Audio itself never
