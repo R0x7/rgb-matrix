@@ -1,0 +1,2 @@
+# cube/ files are synced to the Pi straight from this checkout: keep them LF
+cube/** text eol=lf
