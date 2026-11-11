@@ -13,8 +13,11 @@ corner: top, left and right faces.
 
 Auto mode rotates through a playlist and cross-fades between scenes:
 
-- **Ambient** `plasma` `ripples` `lava` `rain` `life` `warp` `comets`. These are computed in 3D on the
-  cube's surface, so they run across the edges without a seam.
+- **Ambient** `plasma` `ripples` `lava` `rain` `life` `warp` `comets` `fire` `fireworks` `vortex`
+  `kaleido` `orbs` `storm` `tank`. These are computed in 3D on the cube, so they run across the
+  edges without a seam: flames lick over the top edge, firework sparks spill down the sides,
+  `vortex` and `kaleido` are centred on the shared corner, and `orbs` and `tank` treat the cube
+  as a glass box (bouncing balls / sloshing water).
 - **`clock`** hours on the left face, minutes on the right, date and weather on top.
 - **`stats`** this PC's CPU / GPU / RAM / network. Only in rotation while the sender is running.
 - **`visualizer`** takes over whenever the PC is playing sound, and hands back when it stops.

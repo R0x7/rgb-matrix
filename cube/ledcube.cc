@@ -529,10 +529,50 @@ struct Warp : Scene {
   }
 };
 
+// A point travelling over the cube's surface (comets, fireworks, lightning).
+struct Walker { int f; float x, y, ang; };
+
+// Bilinear splat at a sub-pixel position, spilling onto the adjoining face.
+template <class Fn> static void splat(int f, float x, float y, Fn fn) {
+  float fx = x - 0.5f, fy = y - 0.5f;
+  int i0 = (int)floorf(fx), j0 = (int)floorf(fy);
+  float wx = fx - i0, wy = fy - j0;
+  for (int b = 0; b < 2; b++)
+    for (int a = 0; a < 2; a++) {
+      int f2, i2, j2;
+      if (neighbor(f, i0 + a, j0 + b, f2, i2, j2))
+        fn(f2, i2, j2, (a ? wx : 1 - wx) * (b ? wy : 1 - wy));
+    }
+}
+
+// Advance d pixels (d <= 1). Same edge rules as neighbor(), plus the turn the
+// heading needs where the two faces' axes differ. Returns 0 if it stayed on its
+// face, 1 if it crossed onto another, 2 if it bounced off an outer edge.
+static int walk(Walker &c, float d) {
+  const float pi = 3.14159265f;
+  float nx = c.x + cosf(c.ang) * d, ny = c.y + sinf(c.ang) * d;
+  bool lo_i = nx < 0, hi_i = nx >= N, lo_j = ny < 0, hi_j = ny >= N;
+  bool io = lo_i || hi_i, jo = lo_j || hi_j;
+  int r = 1;
+  if (!io && !jo) { c.x = nx; c.y = ny; return 0; }
+  if (io && jo) { c.ang += pi; return 2; }
+  if (c.f == TOP && hi_j) { c.f = LEFT; c.x = nx; c.y = ny - N; }
+  else if (c.f == TOP && hi_i) { c.f = RIGHT; c.x = N - ny; c.y = nx - N; c.ang += pi / 2; }
+  else if (c.f == LEFT && lo_j) { c.f = TOP; c.x = nx; c.y = ny + N; }
+  else if (c.f == LEFT && hi_i) { c.f = RIGHT; c.x = nx - N; c.y = ny; }
+  else if (c.f == RIGHT && lo_j) { c.f = TOP; c.x = N + ny; c.y = N - nx; c.ang -= pi / 2; }
+  else if (c.f == RIGHT && lo_i) { c.f = LEFT; c.x = nx + N; c.y = ny; }
+  else if (io) { c.ang = pi - c.ang; r = 2; }  // outer edge: bounce
+  else { c.ang = -c.ang; r = 2; }
+  c.x = std::min(std::max(c.x, 0.0f), N - 0.001f);
+  c.y = std::min(std::max(c.y, 0.0f), N - 0.001f);
+  return r;
+}
+
 // Comets gliding over the cube's surface: they cross the shared edges, bounce
 // off the outer ones, and leave fading trails that add up where they overlap.
 struct Comets : Scene {
-  struct Comet { int f; float x, y, ang, speed, hue, seed; };
+  struct Comet : Walker { float speed, hue, seed; };
   static const int COUNT = 9;
   Comet cm[COUNT];
   float buf[3][N][N][3];  // linear trail light, decays every frame
@@ -551,38 +591,6 @@ struct Comets : Scene {
       c.seed = frand() * 100;
     }
   }
-  // Bilinear splat at a sub-pixel position, spilling onto the adjoining face.
-  template <class Fn> static void splat(int f, float x, float y, Fn fn) {
-    float fx = x - 0.5f, fy = y - 0.5f;
-    int i0 = (int)floorf(fx), j0 = (int)floorf(fy);
-    float wx = fx - i0, wy = fy - j0;
-    for (int b = 0; b < 2; b++)
-      for (int a = 0; a < 2; a++) {
-        int f2, i2, j2;
-        if (neighbor(f, i0 + a, j0 + b, f2, i2, j2))
-          fn(f2, i2, j2, (a ? wx : 1 - wx) * (b ? wy : 1 - wy));
-      }
-  }
-  // Advance d pixels (d <= 1). Same edge rules as neighbor(), plus the turn the
-  // heading needs where the two faces' axes differ.
-  static void move(Comet &c, float d) {
-    const float pi = 3.14159265f;
-    float nx = c.x + cosf(c.ang) * d, ny = c.y + sinf(c.ang) * d;
-    bool lo_i = nx < 0, hi_i = nx >= N, lo_j = ny < 0, hi_j = ny >= N;
-    bool io = lo_i || hi_i, jo = lo_j || hi_j;
-    if (!io && !jo) { c.x = nx; c.y = ny; return; }
-    if (io && jo) { c.ang += pi; return; }
-    if (c.f == TOP && hi_j) { c.f = LEFT; c.x = nx; c.y = ny - N; }
-    else if (c.f == TOP && hi_i) { c.f = RIGHT; c.x = N - ny; c.y = nx - N; c.ang += pi / 2; }
-    else if (c.f == LEFT && lo_j) { c.f = TOP; c.x = nx; c.y = ny + N; }
-    else if (c.f == LEFT && hi_i) { c.f = RIGHT; c.x = nx - N; c.y = ny; }
-    else if (c.f == RIGHT && lo_j) { c.f = TOP; c.x = N + ny; c.y = N - nx; c.ang -= pi / 2; }
-    else if (c.f == RIGHT && lo_i) { c.f = LEFT; c.x = nx + N; c.y = ny; }
-    else if (io) c.ang = pi - c.ang;  // outer edge: bounce
-    else c.ang = -c.ang;
-    c.x = std::min(std::max(c.x, 0.0f), N - 0.001f);
-    c.y = std::min(std::max(c.y, 0.0f), N - 0.001f);
-  }
   void render(Frame &fr, double t, float dt) override {
     float tt = (float)fmod(t, 3600.0);
     float keep = expf(-1.7f * dt);
@@ -597,7 +605,7 @@ struct Comets : Scene {
       int steps = (int)(dist * 2) + 1;
       float d = dist / steps, k = d * 1.4f / 255.0f;
       for (int s = 0; s < steps; s++) {
-        move(c, d);
+        walk(c, d);
         splat(c.f, c.x, c.y, [&](int f, int i, int j, float w) {
           float *p = buf[f][j][i];
           p[0] += col.r * k * w; p[1] += col.g * k * w; p[2] += col.b * k * w;
@@ -612,6 +620,421 @@ struct Comets : Scene {
       splat(c.f, c.x, c.y, [&](int f, int i, int j, float w) {
         fr.add(f, i, j, scale({255, 255, 255}, w * 1.5f));
       });
+  }
+};
+
+// Flames climb both side faces and lick over the top edges onto the top face.
+// Classic "heat rises and cools" automaton run along the same paths as Rain,
+// with the two side faces joined into one ring of 2N columns.
+struct Fire : Scene {
+  float h[2 * N][2 * N];  // [column][distance up the path]
+  float acc = 0;
+  const char *name() const override { return "fire"; }
+  void enter() override { memset(h, 0, sizeof(h)); acc = 0; }
+  static RGB heat(float v) {
+    v = clamp01(v);
+    return {u8(v * 2.6f), u8(v * 2.6f - 0.9f), u8(v * 3.0f - 2.3f)};
+  }
+  void step(float tt) {
+    // Each cell takes the blurred heat from below, minus a cooling amount read
+    // from a noise map that rises with the flames - cool patches cut the fire
+    // short, the gaps between them become tongues.
+    for (int p = 2 * N - 1; p >= 1; p--)
+      for (int g = 0; g < 2 * N; g++) {
+        int gl = std::max(0, g - 1), gr = std::min(2 * N - 1, g + 1);
+        float below = (h[gl][p - 1] + 2 * h[g][p - 1] + h[gr][p - 1]) * 0.25f;
+        float n = vnoise(g * 0.13f, p * 0.085f - tt * 2.0f, tt * 0.5f);
+        h[g][p] = std::max(0.0f, below - 0.003f - 0.036f * n * n - frand() * 0.006f);
+      }
+    float roar = 0.8f + 0.45f * vnoise(tt * 0.35f, 7.0f, 1.0f);
+    for (int g = 0; g < 2 * N; g++)
+      h[g][0] = clamp01(roar * (0.5f + 0.75f * vnoise(g * 0.11f, tt * 1.1f, 3.0f)) + frand() * 0.15f);
+  }
+  void render(Frame &fr, double t, float dt) override {
+    acc += dt;
+    while (acc > 0.03f) { step((float)fmod(t, 3600.0)); acc -= 0.03f; }
+    for (int j = 0; j < N; j++)
+      for (int i = 0; i < N; i++) {
+        fr.px[LEFT][j][i] = heat(h[i][N - 1 - j]);
+        fr.px[RIGHT][j][i] = heat(h[N + i][N - 1 - j]);
+        fr.px[TOP][j][i] = heat(h[i][2 * N - 1 - j] + h[2 * N - 1 - j][2 * N - 1 - i]);
+      }
+  }
+};
+
+// Shells climb the side faces (and on over the top), then burst into sparks
+// that spread across the surface and fall down the sides.
+struct Fireworks : Scene {
+  struct Shell : Walker { float speed, fuse, hue; };
+  struct Spark : Walker { float vx, vy, life, life0; RGB col; };
+  std::vector<Shell> shells;
+  std::vector<Spark> sparks;
+  float buf[3][N][N][3];
+  float next = 0;
+  const char *name() const override { return "fireworks"; }
+  void enter() override {
+    memset(buf, 0, sizeof(buf));
+    shells.clear();
+    sparks.clear();
+    next = 0.2f;
+  }
+  void deposit(const Walker &w, RGB c, float k) {
+    k /= 255.0f;
+    splat(w.f, w.x, w.y, [&](int f, int i, int j, float wt) {
+      float *p = buf[f][j][i];
+      p[0] += c.r * k * wt; p[1] += c.g * k * wt; p[2] += c.b * k * wt;
+    });
+  }
+  void burst(const Shell &s) {
+    int n = 40 + rnd() % 36;
+    float hue2 = s.hue + (rnd() % 2 ? 0.0f : 0.3f + frand() * 0.3f);
+    bool ring = rnd() % 3 == 0;
+    for (int k = 0; k < n && sparks.size() < 600; k++) {
+      Spark p;
+      p.f = s.f; p.x = s.x; p.y = s.y;
+      p.ang = frand() * 6.2831853f;
+      float sp = ring ? 36 + frand() * 5 : 8 + frand() * 46;
+      p.vx = cosf(p.ang) * sp;
+      p.vy = sinf(p.ang) * sp;
+      p.life = p.life0 = 0.9f + frand() * 1.0f;
+      p.col = hsv(k & 1 ? s.hue : hue2, 0.85f, 1.0f);
+      sparks.push_back(p);
+    }
+    for (int dj = -3; dj <= 3; dj++)  // flash
+      for (int di = -3; di <= 3; di++) {
+        int f2, i2, j2, d2 = di * di + dj * dj;
+        if (d2 <= 10 && neighbor(s.f, (int)s.x + di, (int)s.y + dj, f2, i2, j2))
+          for (int c = 0; c < 3; c++) buf[f2][j2][i2][c] += 1.6f * (1 - d2 / 12.0f);
+      }
+  }
+  void render(Frame &fr, double, float dt) override {
+    float keep = expf(-3.2f * dt);
+    FOR_PIXELS {
+      float *p = buf[f][j][i];
+      p[0] *= keep; p[1] *= keep; p[2] *= keep;
+    }
+    next -= dt;
+    if (next <= 0 && shells.size() < 5) {
+      Shell s;
+      s.f = rnd() % 2 ? LEFT : RIGHT;
+      s.x = 5 + frand() * (N - 10);
+      s.y = N - 1;
+      s.ang = -1.5708f + (frand() - 0.5f) * 0.5f;
+      s.speed = 60 + frand() * 25;
+      s.fuse = 38 + frand() * 72;
+      s.hue = frand();
+      shells.push_back(s);
+      next = 0.3f + frand() * 1.0f;
+    }
+    for (size_t k = 0; k < shells.size();) {
+      Shell &s = shells[k];
+      float dist = s.speed * dt;
+      int steps = (int)(dist * 2) + 1;
+      float d = dist / steps;
+      bool boom = false;
+      for (int q = 0; q < steps && !boom; q++) {
+        boom = walk(s, d) == 2 || (s.fuse -= d) <= 0;
+        deposit(s, {255, 190, 90}, d * 0.5f);
+      }
+      if (boom) { burst(s); shells[k] = shells.back(); shells.pop_back(); }
+      else k++;
+    }
+    float drag = expf(-1.2f * dt);
+    for (size_t k = 0; k < sparks.size();) {
+      Spark &p = sparks[k];
+      p.life -= dt;
+      p.vx *= drag;
+      p.vy *= drag;
+      if (p.f != TOP) p.vy += 42 * dt;  // gravity only acts on the side faces
+      float sp = sqrtf(p.vx * p.vx + p.vy * p.vy);
+      p.ang = atan2f(p.vy, p.vx);
+      float dist = sp * dt;
+      int steps = (int)(dist * 2) + 1;
+      float d = dist / steps;
+      bool dead = p.life <= 0;
+      for (int q = 0; q < steps && !dead; q++) {
+        int r = walk(p, d);
+        if (r == 2) dead = true;
+        deposit(p, p.col, d * 1.3f * p.life / p.life0);
+      }
+      p.vx = cosf(p.ang) * sp;  // the heading turns when a spark changes face
+      p.vy = sinf(p.ang) * sp;
+      if (dead) { sparks[k] = sparks.back(); sparks.pop_back(); }
+      else k++;
+    }
+    FOR_PIXELS {
+      const float *p = buf[f][j][i];
+      fr.px[f][j][i] = {u8(p[0]), u8(p[1]), u8(p[2])};
+    }
+    for (const Spark &p : sparks)  // twinkling heads
+      if (rnd() & 1)
+        fr.add(p.f, (int)p.x, (int)p.y, scale({255, 255, 255}, 0.9f * p.life / p.life0));
+    for (const Shell &s : shells) fr.add(s.f, (int)s.x, (int)s.y, {255, 240, 200});
+  }
+};
+
+// Spiral arms winding into the shared corner, as if the cube were draining
+// into it. The angle is measured around the cube's long diagonal, so each face
+// covers a third of the turn and the arms join up across the edges.
+struct Vortex : Scene {
+  float A[3][N][N], L[3][N][N];
+  bool ready = false;
+  const char *name() const override { return "vortex"; }
+  void enter() override {
+    if (ready) return;
+    ready = true;
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      float x = 1 - p[0], y = 1 - p[1], z = 1 - p[2];
+      A[f][j][i] = atan2f((x + y - 2 * z) * 0.40825f, (x - y) * 0.70711f);
+      L[f][j][i] = logf(sqrtf(x * x + y * y + z * z) + 0.04f);
+    }
+  }
+  void render(Frame &fr, double t, float) override {
+    float tt = (float)fmod(t, 3600.0);
+    float twist = 7.0f + 3.0f * sinf(tt * 0.23f);
+    FOR_PIXELS {
+      float a = A[f][j][i], l = L[f][j][i];
+      float s1 = sinf(3 * a + twist * l - tt * 4.0f);
+      float s2 = sinf(-5 * a + 5 * l + tt * 2.2f);
+      float b = clamp01(0.5f + 0.5f * s1);
+      b = b * b * (0.55f + 0.45f * s2);
+      fr.px[f][j][i] = hsv(a * 0.159155f + l * 0.2f - tt * 0.06f, 0.9f, b);
+    }
+  }
+};
+
+// Stained-glass kaleidoscope with the cube corner's own symmetry: the pattern
+// depends only on a pixel's two distances from the corner's edges, sorted, so
+// all three faces mirror each other (a six-fold figure seen corner-on).
+struct Kaleido : Scene {
+  const char *name() const override { return "kaleido"; }
+  void render(Frame &fr, double t, float) override {
+    float tt = (float)fmod(t, 3600.0);
+    float cx = 0.5f + 0.35f * sinf(tt * 0.37f), cy = 0.5f + 0.35f * sinf(tt * 0.29f + 2);
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      float q0 = 1 - p[0], q1 = 1 - p[1], q2 = 1 - p[2];
+      float b = std::max(q0, std::max(q1, q2));
+      float a = q0 + q1 + q2 - b - std::min(q0, std::min(q1, q2));
+      float w = 0.16f * (vnoise(a * 4 + tt * 0.2f, b * 4 - tt * 0.15f, tt * 0.1f) - 0.5f);
+      float x = a + w, y = b + w;
+      float d = sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy));
+      float v = sinf(x * 17 + tt * 1.1f) + sinf(y * 13 - tt * 0.9f) +
+                sinf((x + y) * 9 + tt * 0.6f) + sinf(d * 21 - tt * 2.3f);
+      float band = fabsf(sinf(v * 2.2f));
+      fr.px[f][j][i] = hsv(v * 0.11f + tt * 0.04f + b * 0.3f, 0.95f, 0.06f + 0.94f * band * band);
+    }
+  }
+};
+
+// The cube as a glass box: shiny balls bounce around inside a neon-gridded
+// room, ray-traced for a viewer looking straight at the shared corner.
+struct Orbs : Scene {
+  struct Ball { float p[3], v[3], r, bounce; RGB col; };
+  static const int COUNT = 5;
+  Ball ball[COUNT];
+  const char *name() const override { return "orbs"; }
+  void enter() override {
+    float hue0 = frand();
+    for (int k = 0; k < COUNT; k++) {
+      Ball &b = ball[k];
+      b.r = 0.10f + frand() * 0.07f;
+      for (int c = 0; c < 3; c++) b.p[c] = b.r + frand() * (1 - 2 * b.r);
+      b.v[0] = (0.15f + frand() * 0.3f) * (rnd() & 1 ? 1 : -1);
+      b.v[1] = (0.15f + frand() * 0.3f) * (rnd() & 1 ? 1 : -1);
+      b.v[2] = 0;
+      b.bounce = sqrtf(2 * 1.8f * (0.35f + frand() * 0.4f));  // speed leaving the floor
+      b.col = hsv(hue0 + (float)k / COUNT, 0.85f, 1.0f);
+    }
+  }
+  void render(Frame &fr, double t, float dt) override {
+    float tt = (float)fmod(t, 3600.0);
+    for (Ball &b : ball) {
+      b.v[2] -= 1.8f * dt;
+      for (int c = 0; c < 3; c++) {
+        b.p[c] += b.v[c] * dt;
+        if (b.p[c] > 1 - b.r) { b.p[c] = 1 - b.r; b.v[c] = -fabsf(b.v[c]); }
+        if (b.p[c] < b.r) { b.p[c] = b.r; b.v[c] = c == 2 ? b.bounce : fabsf(b.v[c]); }
+      }
+    }
+    const float K = 0.57735f;                               // ray direction is -(K,K,K)
+    static const float Lt[3] = {0.36f, 0.48f, 0.8f};        // light
+    static const float Hf[3] = {0.475f, 0.536f, 0.698f};    // half-vector for the highlight
+    static const float wall[3][3] = {{0.5f, 0.0f, 0.6f}, {0.0f, 0.5f, 0.4f}, {0.0f, 0.3f, 0.7f}};
+    FOR_PIXELS {
+      const float *o = P[f][j][i];
+      int hit = -1;
+      float best = 1e9f;
+      for (int k = 0; k < COUNT; k++) {
+        const Ball &b = ball[k];
+        float ox = o[0] - b.p[0], oy = o[1] - b.p[1], oz = o[2] - b.p[2];
+        float bq = -(ox + oy + oz) * K;
+        float disc = bq * bq - (ox * ox + oy * oy + oz * oz - b.r * b.r);
+        if (disc <= 0) continue;
+        float s = -bq - sqrtf(disc);
+        if (s < best) { best = s; hit = k; }
+      }
+      if (hit >= 0) {
+        const Ball &b = ball[hit];
+        float n[3];
+        for (int c = 0; c < 3; c++) n[c] = (o[c] - K * best - b.p[c]) / b.r;
+        float diff = std::max(0.0f, n[0] * Lt[0] + n[1] * Lt[1] + n[2] * Lt[2]);
+        float sp = std::max(0.0f, n[0] * Hf[0] + n[1] * Hf[1] + n[2] * Hf[2]);
+        sp *= sp; sp *= sp; sp *= sp; sp *= sp; sp *= sp;
+        float k = 0.12f + 0.88f * diff;
+        fr.px[f][j][i] = {u8(b.col.r / 255.0f * k + sp), u8(b.col.g / 255.0f * k + sp),
+                          u8(b.col.b / 255.0f * k + sp)};
+        continue;
+      }
+      // Back walls: the ray stops where its smallest coordinate reaches zero.
+      int ax = o[0] < o[1] ? (o[0] < o[2] ? 0 : 2) : (o[1] < o[2] ? 1 : 2);
+      float m = o[ax];
+      float u = o[(ax + 1) % 3] - m, v = o[(ax + 2) % 3] - m;
+      float gu = u * 8 - floorf(u * 8), gv = v * 8 - floorf(v * 8);
+      bool line = fabsf(gu - 0.5f) > 0.43f || fabsf(gv - 0.5f) > 0.43f;
+      float k = (1 - 0.6f * m) * (line ? 0.65f + 0.35f * sinf((u + v) * 9 - tt * 2.5f) : 0.10f);
+      if (ax == 2)  // floor: shadows straight below each ball
+        for (const Ball &b : ball) {
+          float dx = o[0] - m - b.p[0], dy = o[1] - m - b.p[1];
+          if (dx * dx + dy * dy < b.r * b.r) k *= 0.25f;
+        }
+      fr.px[f][j][i] = {u8(wall[ax][0] * k), u8(wall[ax][1] * k), u8(wall[ax][2] * k)};
+    }
+  }
+};
+
+// Thunderstorm: forked lightning starts on the top face, runs over an edge and
+// down a side to the ground, lighting up drifting clouds as it goes.
+struct Storm : Scene {
+  struct Drop { int f; float i, j, speed; };
+  Drop rain[70];
+  float bolt[3][N][N];
+  float flash = 0, next = 0, again = -1;
+  uint32_t seed = 1;
+  const char *name() const override { return "storm"; }
+  void enter() override {
+    memset(bolt, 0, sizeof(bolt));
+    flash = 0;
+    next = 0.4f;
+    again = -1;
+    for (Drop &d : rain) d = {rnd() & 1 ? LEFT : RIGHT, frand() * N, frand() * N, 80 + frand() * 70};
+  }
+  void fork(Walker w, float len, float power, int depth) {
+    while (len > 0) {
+      float dev = (frand() - 0.5f) * 1.9f, seg = 2 + frand() * 4;
+      w.ang += dev;
+      for (float s = 0; s < seg; s += 0.5f) {
+        if (walk(w, 0.5f) == 2) return;
+        splat(w.f, w.x, w.y, [&](int f, int i, int j, float wt) {
+          bolt[f][j][i] += power * wt * 0.9f;
+        });
+      }
+      w.ang -= dev;
+      len -= seg;
+      if (depth < 3 && frand() < 0.16f) {
+        Walker c = w;
+        c.ang += (rnd() & 1 ? 1 : -1) * (0.4f + frand() * 0.5f);
+        fork(c, len * (0.25f + frand() * 0.4f), power * 0.55f, depth + 1);
+      }
+    }
+  }
+  void strike() {
+    Walker w;
+    w.f = TOP;
+    if (rnd() & 1) { w.x = 6 + frand() * (N - 12); w.y = frand() * 30; w.ang = 1.5708f; }
+    else { w.x = frand() * 30; w.y = 6 + frand() * (N - 12); w.ang = 0; }
+    fork(w, 190, 1.0f, 0);
+  }
+  void render(Frame &fr, double t, float dt) override {
+    float tt = (float)fmod(t, 3600.0);
+    float keep = expf(-3.5f * dt);
+    flash *= expf(-3.0f * dt);
+    FOR_PIXELS bolt[f][j][i] *= keep;
+    next -= dt;
+    if (next <= 0) {
+      seed = rng_state;
+      strike();
+      flash = 1;
+      again = frand() < 0.7f ? 0.08f + frand() * 0.08f : -1;
+      next = 0.35f + frand() * 1.5f;
+    } else if (again > 0 && (again -= dt) <= 0) {  // the same bolt flickers once more
+      uint32_t keep_rng = rng_state;
+      rng_state = seed;
+      strike();
+      rng_state = keep_rng;
+      flash = 0.8f;
+      again = -1;
+    }
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      float n = vnoise(p[0] * 3 + tt * 0.12f, p[1] * 3 - tt * 0.09f, p[2] * 3 + tt * 0.05f);
+      float cloud = n * n * (0.28f + 0.9f * flash), v = bolt[f][j][i];
+      fr.px[f][j][i] = {u8(cloud * 0.45f + v * 0.85f), u8(cloud * 0.4f + v * 0.9f),
+                        u8(cloud * 0.9f + v * 1.3f)};
+    }
+    RGB wet = scale({70, 100, 170}, 0.45f + 0.55f * flash);
+    for (Drop &d : rain) {  // rain streaks down the two side faces
+      d.j += d.speed * dt;
+      if (d.j > N + 4) d = {rnd() & 1 ? LEFT : RIGHT, frand() * N, -frand() * 20, 80 + frand() * 70};
+      for (int k = 0; k < 4; k++) fr.add(d.f, (int)d.i, (int)d.j - k, scale(wet, 1 - k * 0.25f));
+    }
+  }
+};
+
+// The cube as a tank half full of water that keeps sloshing: the side faces
+// show the tilting waterline, the top looks down onto the surface.
+struct Tank : Scene {
+  struct Bubble { int f; float i, z, speed, phase; };
+  Bubble bub[28];
+  const char *name() const override { return "tank"; }
+  static float level(float x, float y, float tt) {
+    return 0.56f + 0.20f * sinf(tt * 0.8f) * (x - 0.5f) + 0.20f * sinf(tt * 0.63f + 1.3f) * (y - 0.5f) +
+           0.018f * sinf(x * 13 + tt * 2.6f) + 0.018f * sinf(y * 11 - tt * 2.1f);
+  }
+  // Wobbling net of bright lines, like sunlight on the bottom of a pool.
+  static float caustic(float x, float y, float ph) {
+    float w = 1 - fabsf(sinf(x * 1.2f + 1.7f * sinf(y * 0.8f + ph)) *
+                        sinf(y * 1.1f + 1.7f * sinf(x * 0.7f - ph * 0.8f)));
+    w *= w; w *= w;
+    return w * w;
+  }
+  void respawn(Bubble &b, bool anywhere) {
+    b.f = rnd() & 1 ? LEFT : RIGHT;
+    b.i = frand() * N;
+    b.z = anywhere ? frand() * 0.5f : 0;
+    b.speed = 0.10f + frand() * 0.2f;
+    b.phase = frand() * 6.28f;
+  }
+  void enter() override { for (Bubble &b : bub) respawn(b, true); }
+  void render(Frame &fr, double t, float dt) override {
+    float tt = (float)fmod(t, 3600.0);
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      float h = level(p[0], p[1], tt);
+      if (f == TOP) {
+        float w = caustic(p[0] * 10, p[1] * 10, tt * 0.6f);
+        float k = 0.3f + 0.7f * clamp01((h - 0.36f) / 0.4f);
+        fr.px[f][j][i] = {u8(w * 0.5f * k), u8((0.15f + 0.65f * w) * k), u8((0.4f + 0.55f * w) * k)};
+        continue;
+      }
+      float dep = h - p[2];
+      if (dep < 0) fr.px[f][j][i] = {0, 0, 0};
+      else if (dep < 0.03f) fr.px[f][j][i] = scale({190, 255, 255}, 1 - dep * 12);
+      else {
+        float w = caustic((p[0] - p[1]) * 9, p[2] * 9, tt * 0.6f);
+        float k = expf(-dep * 2.0f);
+        fr.px[f][j][i] = {u8(0.3f * w * k), u8((0.22f + 0.5f * w) * k), u8((0.5f + 0.45f * w) * k + 0.08f)};
+      }
+    }
+    for (Bubble &b : bub) {
+      b.z += b.speed * dt;
+      float i = b.i + 1.5f * sinf(tt * 3 + b.phase), a = (i + 0.5f) / N;
+      if (b.z > level(b.f == LEFT ? 1 : 1 - a, b.f == LEFT ? a : 1, tt) - 0.03f) { respawn(b, false); continue; }
+      int j = (int)((1 - b.z) * N);
+      fr.add(b.f, (int)i, j, {150, 220, 255});
+      fr.add(b.f, (int)i, j - 1, {50, 80, 100});
+    }
   }
 };
 
@@ -1056,7 +1479,9 @@ int main(int argc, char **argv) {
   }
 
   std::vector<Scene *> scenes = {new Plasma, new Ripples, new Lava, new Rain, new Life,
-                                 new Warp, new Comets, new Clock, new StatsScene, new Visualizer,
+                                 new Warp, new Comets, new Fire, new Fireworks, new Vortex,
+                                 new Kaleido, new Orbs, new Storm, new Tank,
+                                 new Clock, new StatsScene, new Visualizer,
                                  new Identify, new Calibrate};
   auto find = [&](const std::string &n) -> Scene * {
     for (Scene *s : scenes) if (n == s->name()) return s;
@@ -1138,7 +1563,10 @@ int main(int argc, char **argv) {
   std::vector<std::string> playlist;
   auto load_playlist = [&]() {
     playlist.clear();
-    std::string pl = cfg("playlist", "clock,plasma,stats,ripples,clock,lava,stats,rain,clock,life,stats,warp,comets");
+    std::string pl = cfg("playlist",
+                         "clock,plasma,stats,fire,clock,ripples,stats,vortex,clock,lava,stats,fireworks,"
+                         "clock,rain,stats,orbs,clock,life,stats,kaleido,clock,warp,stats,storm,"
+                         "clock,comets,stats,tank");
     size_t a = 0;
     while (a <= pl.size()) {
       size_t b = pl.find(',', a);
