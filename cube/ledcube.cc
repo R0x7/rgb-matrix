@@ -1038,6 +1038,192 @@ struct Tank : Scene {
   }
 };
 
+// ---- Escher-inspired scenes ----
+//
+// Seen corner-on, the cube's three faces are the three rhombi of an isometric
+// drawing, and the cube's edges are its three axes. So figures built from
+// lines along those axes are axis-aligned on every face. "Hex" coordinates:
+// d[0..2] are constant along the three axis directions and sum to zero.
+static inline void hex_coords(const float *p, float d[3]) {
+  float qx = 1 - p[0], qy = 1 - p[1], qz = 1 - p[2];
+  d[0] = (qx - qz) * N;
+  d[1] = (qz - qy) * N;
+  d[2] = (qy - qx) * N;
+}
+
+// Edge profile for the tessellations: period 1, so every tile gets the same
+// outline and the tiles still interlock however far it is pushed.
+static inline float tile_wave(float v, float ph) {
+  return sinf(6.2831853f * v) + 0.3f * sinf(12.566371f * v + ph);
+}
+
+// Impossible triangle wrapped around the shared corner, one bar per face pair.
+// Each of its three L-shaped surfaces carries planks that flow along it and
+// round the bend, so everything circulates forever in one direction.
+struct Tribar : Scene {
+  const char *name() const override { return "tribar"; }
+  void render(Frame &fr, double t, float) override {
+    float tt = (float)fmod(t, 3600.0);
+    const float R = 35, H = 8, M = R - H, r = R - 2 * H, T = 2 * R - H;
+    static const float tone[3] = {1.0f, 0.5f, 0.22f};
+    float hue = 0.08f + tt * 0.012f;
+    float pulse = -70 + fmodf(tt * 50, 230);
+    FOR_PIXELS {
+      float d[3];
+      hex_coords(P[f][j][i], d);
+      bool inside = true, hole = true;
+      for (int m = 0; m < 3; m++) {
+        if (d[m] > R || d[m] < -T) inside = false;
+        if (d[m] > r) hole = false;
+      }
+      if (!inside || hole) {  // backdrop: faint isometric dot grid
+        float a = fabsf(d[0] / 8 - roundf(d[0] / 8)), b = fabsf(d[1] / 8 - roundf(d[1] / 8));
+        float k = a < 0.07f && b < 0.07f ? 0.10f + 0.06f * sinf(tt + (d[0] - d[1]) * 0.05f) : 0;
+        fr.px[f][j][i] = hsv(hue + 0.5f, 0.6f, k);
+        continue;
+      }
+      int outer = -1, both = -1, s;
+      float q;
+      for (int m = 0; m < 3; m++)
+        if (d[m] > M) {
+          if (outer >= 0) both = (outer == 0 && m == 2) ? 0 : m;  // the later bar of the pair
+          outer = m;
+        }
+      if (outer >= 0) {  // outer half of a bar: long arm of surface s
+        s = both >= 0 ? both : outer;
+        q = d[(s + 1) % 3];
+      } else {           // inner half of a bar: short arm of the surface before it
+        int in = -1, pair = -1;
+        for (int m = 0; m < 3; m++)
+          if (d[m] > r) {
+            if (in >= 0) pair = (in == 0 && m == 2) ? 2 : in;  // the earlier bar of the pair
+            in = m;
+          }
+        s = pair >= 0 ? pair : (in + 2) % 3;
+        q = 2 * M - d[s];
+      }
+      float plank = q / 9 - tt * 1.6f;
+      plank -= floorf(plank);
+      float glow = (q - pulse) / 9;
+      float v = tone[s] * (plank < 0.12f ? 0.55f : 1.0f) + 0.9f * expf(-glow * glow);
+      fr.px[f][j][i] = hsv(hue + s * 0.035f, clamp01(0.75f - 0.6f * expf(-glow * glow)), clamp01(v));
+    }
+  }
+};
+
+// Endless lattice of beams filling the cube, viewed straight down its long
+// diagonal and drifting slowly. Each ray steps from beam edge to beam edge
+// until it lands on a beam; the three face directions get three tones.
+struct Lattice : Scene {
+  float off[3] = {0, 0, 0};
+  const char *name() const override { return "lattice"; }
+  void render(Frame &fr, double t, float dt) override {
+    float tt = (float)fmod(t, 3600.0);
+    off[0] += dt * 0.22f * sinf(tt * 0.050f + 0.5f);
+    off[1] += dt * 0.22f * sinf(tt * 0.037f + 2.6f);
+    off[2] += dt * 0.22f * sinf(tt * 0.043f + 4.4f);
+    for (float &o : off) o -= floorf(o);
+    const float PER = 3.0f, B = 0.28f;                  // beams per cube edge, beam width
+    static const float tone[3] = {0.5f, 0.24f, 1.0f};   // faces towards x, y, z
+    static const int face_axis[3] = {2, 0, 1};          // TOP, LEFT, RIGHT
+    float hue = 0.09f + 0.03f * sinf(tt * 0.02f);
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      bool in[3];
+      float dist[3];
+      for (int a = 0; a < 3; a++) {
+        float q = p[a] * PER + off[a];
+        q -= floorf(q);
+        in[a] = q < B;
+        dist[a] = in[a] ? q : q - B;
+      }
+      int last = face_axis[f];
+      float depth = 0;
+      while (in[0] + in[1] + in[2] < 2 && depth < 7) {
+        int a = dist[0] < dist[1] ? (dist[0] < dist[2] ? 0 : 2) : (dist[1] < dist[2] ? 1 : 2);
+        float step = dist[a];
+        depth += step;
+        for (int c = 0; c < 3; c++) dist[c] -= step;
+        in[a] = !in[a];
+        dist[a] = in[a] ? B : 1 - B;
+        last = a;
+      }
+      if (depth >= 7) { fr.px[f][j][i] = {0, 0, 0}; continue; }
+      float fog = expf(-depth * 0.5f);
+      fr.px[f][j][i] = hsv(hue + 0.5f * (1 - fog), 0.35f + 0.5f * (1 - fog), tone[last] * (0.12f + 0.88f * fog));
+    }
+  }
+};
+
+// Tessellation that keeps changing its mind: a checkerboard whose edges bulge
+// into interlocking creatures (with eyes) and relax back to squares, in waves
+// that sweep across the cube. Tiles fold over the cube's edges.
+struct Metamorph : Scene {
+  const char *name() const override { return "metamorph"; }
+  void render(Frame &fr, double t, float) override {
+    float tt = (float)fmod(t, 3600.0);
+    const float K = 3;  // tiles per cube edge
+    static const int face_axis[3] = {2, 0, 1};
+    float ph = tt * 0.7f;
+    RGB paper = {250, 232, 196}, ink = hsv(0.6f + 0.25f * sinf(tt * 0.03f), 0.85f, 0.34f);
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      float w = 0.5f + 0.5f * sinf((p[0] + p[1] + p[2]) * 2.4f - tt * 0.45f);
+      float A = 0.18f * w * w * (3 - 2 * w);
+      float g[3], s[3], gd[3];
+      for (int a = 0; a < 3; a++) {
+        g[a] = p[a] * K + 0.5f;  // the half keeps each face mid-tile in its own depth
+        s[a] = tile_wave(g[a], ph);
+      }
+      int par = 0;
+      for (int a = 0; a < 3; a++) {
+        gd[a] = g[a] + A * (s[(a + 1) % 3] + s[(a + 2) % 3]);
+        par += (int)floorf(gd[a]);
+      }
+      int a1 = (face_axis[f] + 1) % 3, a2 = (face_axis[f] + 2) % 3;
+      float ex = gd[a1] - floorf(gd[a1]) - 0.3f, ey = gd[a2] - floorf(gd[a2]) - 0.32f;
+      bool eye = A > 0.09f && ex * ex + ey * ey < 0.0075f;
+      fr.px[f][j][i] = ((par & 1) != 0) != eye ? paper : ink;
+    }
+  }
+};
+
+// Interlocking tiles that spiral into the shared corner, shrinking without end
+// while new ones grow out of it. Log-polar coordinates around the cube's long
+// diagonal keep every tile the same shape at every size.
+struct Droste : Scene {
+  float U[3][N][N], V[3][N][N], fade[3][N][N];
+  bool ready = false;
+  const char *name() const override { return "droste"; }
+  void enter() override {
+    if (ready) return;
+    ready = true;
+    const float n = 12 / 6.2831853f;  // 12 tiles around
+    FOR_PIXELS {
+      const float *p = P[f][j][i];
+      float x = 1 - p[0], y = 1 - p[1], z = 1 - p[2];
+      float pu = (x - y) * 0.70711f, pw = (x + y - 2 * z) * 0.40825f;
+      float rr = sqrtf(pu * pu + pw * pw) + 1e-4f;
+      U[f][j][i] = atan2f(pw, pu) * n;
+      V[f][j][i] = logf(rr) * n;
+      fade[f][j][i] = clamp01((rr - 0.03f) / 0.09f);  // tiles smaller than a pixel melt away
+    }
+  }
+  void render(Frame &fr, double t, float) override {
+    float tt = (float)fmod(t, 3600.0);
+    float ph = tt * 0.5f, twist = 0.25f * sinf(tt * 0.11f);
+    FOR_PIXELS {
+      float v = V[f][j][i] - tt * 0.4f;
+      float u = U[f][j][i] + twist * V[f][j][i] + tt * 0.12f;
+      float ud = u + 0.17f * tile_wave(v, ph), vd = v + 0.17f * tile_wave(u, ph + 2);
+      float fu = floorf(ud), fv = floorf(vd);
+      bool light = (((int)fu + (int)fv) & 1) != 0;
+      RGB c = light ? RGB{250, 232, 196} : hsv(0.02f + fv * 0.045f, 0.85f, 0.42f);
+      fr.px[f][j][i] = scale(c, fade[f][j][i]);
+    }
+  }
+};
+
 static const char *weather_text(int code) {
   if (code == 0) return "CLEAR";
   if (code <= 2) return "P.CLOUDY";
@@ -1481,6 +1667,7 @@ int main(int argc, char **argv) {
   std::vector<Scene *> scenes = {new Plasma, new Ripples, new Lava, new Rain, new Life,
                                  new Warp, new Comets, new Fire, new Fireworks, new Vortex,
                                  new Kaleido, new Orbs, new Storm, new Tank,
+                                 new Tribar, new Lattice, new Metamorph, new Droste,
                                  new Clock, new StatsScene, new Visualizer,
                                  new Identify, new Calibrate};
   auto find = [&](const std::string &n) -> Scene * {
@@ -1566,7 +1753,8 @@ int main(int argc, char **argv) {
     std::string pl = cfg("playlist",
                          "clock,plasma,stats,fire,clock,ripples,stats,vortex,clock,lava,stats,fireworks,"
                          "clock,rain,stats,orbs,clock,life,stats,kaleido,clock,warp,stats,storm,"
-                         "clock,comets,stats,tank");
+                         "clock,comets,stats,tank,clock,tribar,stats,lattice,"
+                         "clock,metamorph,stats,droste");
     size_t a = 0;
     while (a <= pl.size()) {
       size_t b = pl.find(',', a);

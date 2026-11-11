@@ -18,6 +18,10 @@ Auto mode rotates through a playlist and cross-fades between scenes:
   edges without a seam: flames lick over the top edge, firework sparks spill down the sides,
   `vortex` and `kaleido` are centred on the shared corner, and `orbs` and `tank` treat the cube
   as a glass box (bouncing balls / sloshing water).
+- **Escher-inspired** `tribar` `lattice` `metamorph` `droste`. Seen corner-on, the three faces are
+  the three rhombi of an isometric drawing, which these use: an impossible triangle wrapped round
+  the corner, an endless lattice of beams inside the cube, a checkerboard that morphs into
+  interlocking creatures and back, and tiles spiralling into the corner as they shrink.
 - **`clock`** hours on the left face, minutes on the right, date and weather on top.
 - **`stats`** this PC's CPU / GPU / RAM / network. Only in rotation while the sender is running.
 - **`visualizer`** takes over whenever the PC is playing sound, and hands back when it stops.
