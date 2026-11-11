@@ -13,7 +13,7 @@ corner: top, left and right faces.
 
 Auto mode rotates through a playlist and cross-fades between scenes:
 
-- **Ambient** `plasma` `ripples` `lava` `rain` `life` `warp`. These are computed in 3D on the
+- **Ambient** `plasma` `ripples` `lava` `rain` `life` `warp` `comets`. These are computed in 3D on the
   cube's surface, so they run across the edges without a seam.
 - **`clock`** hours on the left face, minutes on the right, date and weather on top.
 - **`stats`** this PC's CPU / GPU / RAM / network. Only in rotation while the sender is running.

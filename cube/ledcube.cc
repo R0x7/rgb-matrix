@@ -529,6 +529,92 @@ struct Warp : Scene {
   }
 };
 
+// Comets gliding over the cube's surface: they cross the shared edges, bounce
+// off the outer ones, and leave fading trails that add up where they overlap.
+struct Comets : Scene {
+  struct Comet { int f; float x, y, ang, speed, hue, seed; };
+  static const int COUNT = 9;
+  Comet cm[COUNT];
+  float buf[3][N][N][3];  // linear trail light, decays every frame
+  const char *name() const override { return "comets"; }
+  void enter() override {
+    memset(buf, 0, sizeof(buf));
+    float hue0 = frand();
+    for (int k = 0; k < COUNT; k++) {
+      Comet &c = cm[k];
+      c.f = k % 3;
+      c.x = 4 + frand() * (N - 8);
+      c.y = 4 + frand() * (N - 8);
+      c.ang = frand() * 6.2831853f;
+      c.speed = 26 + frand() * 22;
+      c.hue = hue0 + (float)k / COUNT;
+      c.seed = frand() * 100;
+    }
+  }
+  // Bilinear splat at a sub-pixel position, spilling onto the adjoining face.
+  template <class Fn> static void splat(int f, float x, float y, Fn fn) {
+    float fx = x - 0.5f, fy = y - 0.5f;
+    int i0 = (int)floorf(fx), j0 = (int)floorf(fy);
+    float wx = fx - i0, wy = fy - j0;
+    for (int b = 0; b < 2; b++)
+      for (int a = 0; a < 2; a++) {
+        int f2, i2, j2;
+        if (neighbor(f, i0 + a, j0 + b, f2, i2, j2))
+          fn(f2, i2, j2, (a ? wx : 1 - wx) * (b ? wy : 1 - wy));
+      }
+  }
+  // Advance d pixels (d <= 1). Same edge rules as neighbor(), plus the turn the
+  // heading needs where the two faces' axes differ.
+  static void move(Comet &c, float d) {
+    const float pi = 3.14159265f;
+    float nx = c.x + cosf(c.ang) * d, ny = c.y + sinf(c.ang) * d;
+    bool lo_i = nx < 0, hi_i = nx >= N, lo_j = ny < 0, hi_j = ny >= N;
+    bool io = lo_i || hi_i, jo = lo_j || hi_j;
+    if (!io && !jo) { c.x = nx; c.y = ny; return; }
+    if (io && jo) { c.ang += pi; return; }
+    if (c.f == TOP && hi_j) { c.f = LEFT; c.x = nx; c.y = ny - N; }
+    else if (c.f == TOP && hi_i) { c.f = RIGHT; c.x = N - ny; c.y = nx - N; c.ang += pi / 2; }
+    else if (c.f == LEFT && lo_j) { c.f = TOP; c.x = nx; c.y = ny + N; }
+    else if (c.f == LEFT && hi_i) { c.f = RIGHT; c.x = nx - N; c.y = ny; }
+    else if (c.f == RIGHT && lo_j) { c.f = TOP; c.x = N + ny; c.y = N - nx; c.ang -= pi / 2; }
+    else if (c.f == RIGHT && lo_i) { c.f = LEFT; c.x = nx + N; c.y = ny; }
+    else if (io) c.ang = pi - c.ang;  // outer edge: bounce
+    else c.ang = -c.ang;
+    c.x = std::min(std::max(c.x, 0.0f), N - 0.001f);
+    c.y = std::min(std::max(c.y, 0.0f), N - 0.001f);
+  }
+  void render(Frame &fr, double t, float dt) override {
+    float tt = (float)fmod(t, 3600.0);
+    float keep = expf(-1.7f * dt);
+    FOR_PIXELS {
+      float *p = buf[f][j][i];
+      p[0] *= keep; p[1] *= keep; p[2] *= keep;
+    }
+    for (Comet &c : cm) {
+      c.ang = fmodf(c.ang + (vnoise(tt * 0.4f, c.seed, 0.5f) - 0.5f) * 5.0f * dt, 6.2831853f);
+      RGB col = hsv(c.hue + tt * 0.01f, 1.0f, 1.0f);
+      float dist = c.speed * dt;
+      int steps = (int)(dist * 2) + 1;
+      float d = dist / steps, k = d * 1.4f / 255.0f;
+      for (int s = 0; s < steps; s++) {
+        move(c, d);
+        splat(c.f, c.x, c.y, [&](int f, int i, int j, float w) {
+          float *p = buf[f][j][i];
+          p[0] += col.r * k * w; p[1] += col.g * k * w; p[2] += col.b * k * w;
+        });
+      }
+    }
+    FOR_PIXELS {
+      const float *p = buf[f][j][i];
+      fr.px[f][j][i] = {u8(p[0]), u8(p[1]), u8(p[2])};
+    }
+    for (Comet &c : cm)  // white-hot heads
+      splat(c.f, c.x, c.y, [&](int f, int i, int j, float w) {
+        fr.add(f, i, j, scale({255, 255, 255}, w * 1.5f));
+      });
+  }
+};
+
 static const char *weather_text(int code) {
   if (code == 0) return "CLEAR";
   if (code <= 2) return "P.CLOUDY";
@@ -970,7 +1056,7 @@ int main(int argc, char **argv) {
   }
 
   std::vector<Scene *> scenes = {new Plasma, new Ripples, new Lava, new Rain, new Life,
-                                 new Warp, new Clock, new StatsScene, new Visualizer,
+                                 new Warp, new Comets, new Clock, new StatsScene, new Visualizer,
                                  new Identify, new Calibrate};
   auto find = [&](const std::string &n) -> Scene * {
     for (Scene *s : scenes) if (n == s->name()) return s;
@@ -1052,7 +1138,7 @@ int main(int argc, char **argv) {
   std::vector<std::string> playlist;
   auto load_playlist = [&]() {
     playlist.clear();
-    std::string pl = cfg("playlist", "clock,plasma,stats,ripples,clock,lava,stats,rain,clock,life,stats,warp");
+    std::string pl = cfg("playlist", "clock,plasma,stats,ripples,clock,lava,stats,rain,clock,life,stats,warp,comets");
     size_t a = 0;
     while (a <= pl.size()) {
       size_t b = pl.find(',', a);
